@@ -80,6 +80,7 @@ public partial class McpPlugin : EditorPlugin
                 Callable.From(() => _panel?.Refresh()).CallDeferred();
             };
             Log($"Reattached to existing relay (PID {_relayProcess.Id}).", LogLevel.Success);
+            _panel?.Refresh();
         }
     }
 
