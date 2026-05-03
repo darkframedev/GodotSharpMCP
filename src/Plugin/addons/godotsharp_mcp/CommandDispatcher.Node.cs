@@ -5,6 +5,16 @@ namespace GodotSharp.Plugin;
 
 public static partial class CommandDispatcher
 {
+    // Sets the owner of a node and all its descendants to sceneRoot.
+    // Required so that nodes added programmatically are saved with the scene.
+    private static void SetOwnerRecursive(Node node, Node sceneRoot)
+    {
+        node.Owner = sceneRoot;
+        foreach (var child in node.GetChildren(includeInternal: true))
+            if (child is Node childNode)
+                SetOwnerRecursive(childNode, sceneRoot);
+    }
+
     // -----------------------------------------------------------------
     // godot_add_node
     // -----------------------------------------------------------------
@@ -15,13 +25,18 @@ public static partial class CommandDispatcher
         var nodeType   = RequireString(args, "node_type");
         var nodeName   = RequireString(args, "node_name");
 
-        var parent  = GetNode(parentPath);
-        var newNode = (Node)ClassDB.Instantiate(nodeType).AsGodotObject();
-        newNode.Name = nodeName;
+        var sceneRoot = GetSceneRoot();
+        var parent    = GetNode(parentPath);
+        var newNode   = (Node)ClassDB.Instantiate(nodeType).AsGodotObject();
+        newNode.Name  = nodeName;
 
         var undo = plugin.GetUndoRedo();
-        undo.CreateAction($"MCP: Add {nodeType} '{nodeName}'");
+        // customContext scopes the action to the scene's own undo history — required to
+        // avoid native assertions when CommitAction is called from a deferred context.
+        undo.CreateAction($"MCP: Add {nodeType} '{nodeName}'",
+            mergeMode: UndoRedo.MergeMode.Disable, customContext: sceneRoot);
         undo.AddDoMethod(parent, Node.MethodName.AddChild, newNode);
+        undo.AddDoMethod(newNode, "set_owner", sceneRoot);   // must be set for scene save
         undo.AddDoReference(newNode);
         undo.AddUndoMethod(parent, Node.MethodName.RemoveChild, newNode);
         undo.AddUndoReference(newNode);
@@ -41,15 +56,20 @@ public static partial class CommandDispatcher
 
     private static string NodeRemove(McpPlugin plugin, JsonNode? args)
     {
-        var nodePath = RequireString(args, "node_path");
-        var node     = GetNode(nodePath);
-        var parent   = node.GetParent()
+        var nodePath  = RequireString(args, "node_path");
+        var sceneRoot = GetSceneRoot();
+        var node      = GetNode(nodePath);
+        var parent    = node.GetParent()
             ?? throw new InvalidOperationException($"Node '{nodePath}' has no parent and cannot be removed.");
+        var oldOwner  = node.Owner;
 
         var undo = plugin.GetUndoRedo();
-        undo.CreateAction($"MCP: Remove '{node.Name}'");
+        undo.CreateAction($"MCP: Remove '{node.Name}'",
+            mergeMode: UndoRedo.MergeMode.Disable, customContext: sceneRoot);
         undo.AddDoMethod(parent, Node.MethodName.RemoveChild, node);
         undo.AddUndoMethod(parent, Node.MethodName.AddChild, node);
+        if (oldOwner is not null)
+            undo.AddUndoMethod(node, "set_owner", oldOwner);   // restore owner on undo
         undo.AddUndoReference(node);
         undo.CommitAction();
 
@@ -86,12 +106,14 @@ public static partial class CommandDispatcher
         var property  = RequireString(args, "property");
         var valueNode = args?["value"];
 
-        var node     = GetNode(nodePath);
-        var oldValue = node.Get(property);
-        var newValue = NodeSerializer.JsonNodeToVariant(valueNode);
+        var sceneRoot = GetSceneRoot();
+        var node      = GetNode(nodePath);
+        var oldValue  = node.Get(property);
+        var newValue  = NodeSerializer.JsonNodeToVariant(valueNode);
 
         var undo = plugin.GetUndoRedo();
-        undo.CreateAction($"MCP: Set '{property}' on '{node.Name}'");
+        undo.CreateAction($"MCP: Set '{property}' on '{node.Name}'",
+            mergeMode: UndoRedo.MergeMode.Disable, customContext: sceneRoot);
         undo.AddDoProperty(node, property, newValue);
         undo.AddUndoProperty(node, property, oldValue);
         undo.CommitAction();
@@ -111,16 +133,19 @@ public static partial class CommandDispatcher
 
     private static string NodeDuplicate(McpPlugin plugin, JsonNode? args)
     {
-        var nodePath = RequireString(args, "node_path");
-        var node     = GetNode(nodePath);
-        var parent   = node.GetParent()
+        var nodePath  = RequireString(args, "node_path");
+        var sceneRoot = GetSceneRoot();
+        var node      = GetNode(nodePath);
+        var parent    = node.GetParent()
             ?? throw new InvalidOperationException($"Node '{nodePath}' has no parent; cannot duplicate.");
 
         var clone = node.Duplicate();
 
         var undo = plugin.GetUndoRedo();
-        undo.CreateAction($"MCP: Duplicate '{node.Name}'");
+        undo.CreateAction($"MCP: Duplicate '{node.Name}'",
+            mergeMode: UndoRedo.MergeMode.Disable, customContext: sceneRoot);
         undo.AddDoMethod(parent, Node.MethodName.AddChild, clone);
+        undo.AddDoMethod(clone, "set_owner", sceneRoot);   // owner for scene save
         undo.AddDoReference(clone);
         undo.AddUndoMethod(parent, Node.MethodName.RemoveChild, clone);
         undo.AddUndoReference(clone);
@@ -143,13 +168,15 @@ public static partial class CommandDispatcher
         var nodePath      = RequireString(args, "node_path");
         var newParentPath = RequireString(args, "new_parent_path");
 
+        var sceneRoot = GetSceneRoot();
         var node      = GetNode(nodePath);
         var oldParent = node.GetParent()
             ?? throw new InvalidOperationException($"Node '{nodePath}' has no parent.");
         var newParent = GetNode(newParentPath);
 
         var undo = plugin.GetUndoRedo();
-        undo.CreateAction($"MCP: Reparent '{node.Name}' → '{newParentPath}'");
+        undo.CreateAction($"MCP: Reparent '{node.Name}' → '{newParentPath}'",
+            mergeMode: UndoRedo.MergeMode.Disable, customContext: sceneRoot);
         undo.AddDoMethod(node, Node.MethodName.Reparent, newParent);
         undo.AddUndoMethod(node, Node.MethodName.Reparent, oldParent);
         undo.CommitAction();
@@ -171,11 +198,13 @@ public static partial class CommandDispatcher
         var nodePath = RequireString(args, "node_path");
         var newName  = RequireString(args, "new_name");
 
-        var node    = GetNode(nodePath);
-        var oldName = node.Name.ToString();
+        var sceneRoot = GetSceneRoot();
+        var node      = GetNode(nodePath);
+        var oldName   = node.Name.ToString();
 
         var undo = plugin.GetUndoRedo();
-        undo.CreateAction($"MCP: Rename '{oldName}' → '{newName}'");
+        undo.CreateAction($"MCP: Rename '{oldName}' → '{newName}'",
+            mergeMode: UndoRedo.MergeMode.Disable, customContext: sceneRoot);
         undo.AddDoProperty(node, "name", newName);
         undo.AddUndoProperty(node, "name", oldName);
         undo.CommitAction();
@@ -199,13 +228,15 @@ public static partial class CommandDispatcher
         var newIndex = args?["new_index"]?.GetValue<int>()
             ?? throw new ArgumentException("Required parameter 'new_index' is missing.");
 
-        var node     = GetNode(nodePath);
-        var parent   = node.GetParent()
+        var sceneRoot = GetSceneRoot();
+        var node      = GetNode(nodePath);
+        var parent    = node.GetParent()
             ?? throw new InvalidOperationException($"Node '{nodePath}' has no parent.");
-        var oldIndex = node.GetIndex();
+        var oldIndex  = node.GetIndex();
 
         var undo = plugin.GetUndoRedo();
-        undo.CreateAction($"MCP: Move '{node.Name}' to index {newIndex}");
+        undo.CreateAction($"MCP: Move '{node.Name}' to index {newIndex}",
+            mergeMode: UndoRedo.MergeMode.Disable, customContext: sceneRoot);
         undo.AddDoMethod(parent, Node.MethodName.MoveChild, node, newIndex);
         undo.AddUndoMethod(parent, Node.MethodName.MoveChild, node, oldIndex);
         undo.CommitAction();
@@ -275,12 +306,14 @@ public static partial class CommandDispatcher
         var targetPath = RequireString(args, "target_path");
         var methodName = RequireString(args, "method_name");
 
-        var source   = GetNode(sourcePath);
-        var target   = GetNode(targetPath);
-        var callable = new Callable(target, methodName);
+        var sceneRoot = GetSceneRoot();
+        var source    = GetNode(sourcePath);
+        var target    = GetNode(targetPath);
+        var callable  = new Callable(target, methodName);
 
         var undo = plugin.GetUndoRedo();
-        undo.CreateAction($"MCP: Connect {source.Name}.{signalName} → {target.Name}.{methodName}");
+        undo.CreateAction($"MCP: Connect {source.Name}.{signalName} → {target.Name}.{methodName}",
+            mergeMode: UndoRedo.MergeMode.Disable, customContext: sceneRoot);
         undo.AddDoMethod(source, "connect", signalName, callable);
         undo.AddUndoMethod(source, "disconnect", signalName, callable);
         undo.CommitAction();
@@ -303,10 +336,12 @@ public static partial class CommandDispatcher
     {
         var nodePath  = RequireString(args, "node_path");
         var groupName = RequireString(args, "group_name");
+        var sceneRoot = GetSceneRoot();
         var node      = GetNode(nodePath);
 
         var undo = plugin.GetUndoRedo();
-        undo.CreateAction($"MCP: Add '{node.Name}' to group '{groupName}'");
+        undo.CreateAction($"MCP: Add '{node.Name}' to group '{groupName}'",
+            mergeMode: UndoRedo.MergeMode.Disable, customContext: sceneRoot);
         undo.AddDoMethod(node, "add_to_group", groupName, true);
         undo.AddUndoMethod(node, "remove_from_group", groupName);
         undo.CommitAction();
@@ -322,10 +357,12 @@ public static partial class CommandDispatcher
     {
         var nodePath  = RequireString(args, "node_path");
         var groupName = RequireString(args, "group_name");
+        var sceneRoot = GetSceneRoot();
         var node      = GetNode(nodePath);
 
         var undo = plugin.GetUndoRedo();
-        undo.CreateAction($"MCP: Remove '{node.Name}' from group '{groupName}'");
+        undo.CreateAction($"MCP: Remove '{node.Name}' from group '{groupName}'",
+            mergeMode: UndoRedo.MergeMode.Disable, customContext: sceneRoot);
         undo.AddDoMethod(node, "remove_from_group", groupName);
         undo.AddUndoMethod(node, "add_to_group", groupName, true);
         undo.CommitAction();

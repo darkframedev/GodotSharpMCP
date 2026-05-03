@@ -90,7 +90,8 @@ public static partial class CommandDispatcher
         var oldScript = node.GetScript();
 
         var undo = plugin.GetUndoRedo();
-        undo.CreateAction($"MCP: Attach script '{scriptPath}' to '{node.Name}'");
+        undo.CreateAction($"MCP: Attach script '{scriptPath}' to '{node.Name}'",
+            mergeMode: UndoRedo.MergeMode.Disable, customContext: GetSceneRoot());
         undo.AddDoMethod(node, "set_script", script);
         undo.AddUndoMethod(node, "set_script", oldScript);
         undo.CommitAction();

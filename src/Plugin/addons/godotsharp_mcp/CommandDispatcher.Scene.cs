@@ -101,12 +101,15 @@ public static partial class CommandDispatcher
         var packed = ResourceLoader.Load<PackedScene>(scenePath)
             ?? throw new InvalidOperationException($"Could not load PackedScene: '{scenePath}'");
 
-        var instance = packed.Instantiate();
-        var parent   = GetNode(parentPath);
+        var sceneRoot = GetSceneRoot();
+        var instance  = packed.Instantiate();
+        var parent    = GetNode(parentPath);
 
         var undo = plugin.GetUndoRedo();
-        undo.CreateAction($"MCP: Instantiate '{scenePath}'");
+        undo.CreateAction($"MCP: Instantiate '{scenePath}'",
+            mergeMode: UndoRedo.MergeMode.Disable, customContext: sceneRoot);
         undo.AddDoMethod(parent, Node.MethodName.AddChild, instance);
+        undo.AddDoMethod(instance, "set_owner", sceneRoot);  // required for scene save
         undo.AddDoReference(instance);
         undo.AddUndoMethod(parent, Node.MethodName.RemoveChild, instance);
         undo.AddUndoReference(instance);

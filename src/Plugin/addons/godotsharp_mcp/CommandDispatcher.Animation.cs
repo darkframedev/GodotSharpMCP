@@ -88,7 +88,8 @@ public static partial class CommandDispatcher
         {
             library = new AnimationLibrary();
             var undo = plugin.GetUndoRedo();
-            undo.CreateAction($"MCP: Create AnimationLibrary on '{player.Name}'");
+            undo.CreateAction($"MCP: Create AnimationLibrary on '{player.Name}'",
+                mergeMode: UndoRedo.MergeMode.Disable, customContext: GetSceneRoot());
             undo.AddDoMethod(player, AnimationPlayer.MethodName.AddAnimationLibrary, "", library);
             undo.AddUndoMethod(player, AnimationPlayer.MethodName.RemoveAnimationLibrary, "");
             undo.CommitAction();
