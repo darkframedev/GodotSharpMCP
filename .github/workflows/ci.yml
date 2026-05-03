@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - '**.md'
+      - 'LICENSE'
+  pull_request:
+    branches: [main]
+    paths-ignore:
+      - '**.md'
+      - 'LICENSE'
+
+jobs:
+  build:
+    name: Build relay (linux-x64)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.x'
+
+      - name: Restore
+        run: dotnet restore src/Relay/GodotSharp.Relay.csproj
+
+      - name: Build
+        run: >
+          dotnet publish src/Relay/GodotSharp.Relay.csproj
+          -c Release
+          -r linux-x64
+          --no-self-contained
+          -p:PublishSingleFile=true
+          --nologo -v quiet

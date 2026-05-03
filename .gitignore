@@ -1,0 +1,21 @@
+# .NET build artifacts
+src/Relay/bin/
+src/Relay/obj/
+src/Relay/publish/
+src/Relay/_publish_*/
+src/Plugin/obj/
+
+# Godot-generated files
+src/Plugin/.godot/
+*.uid
+
+# Debug symbols — not needed in the distributed plugin
+*.pdb
+
+# Plugin bin — relay binaries ARE tracked in git (required for Godot Asset Library).
+# They are rebuilt by build.ps1 or the release CI workflow.
+# Do NOT add src/Plugin/addons/godotsharp_mcp/bin/ here.
+
+# OS
+.DS_Store
+Thumbs.db

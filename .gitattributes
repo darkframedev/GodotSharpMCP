@@ -1,0 +1,14 @@
+# Text files — normalize line endings to LF in the repo
+* text=auto eol=lf
+
+# C# source
+*.cs text eol=lf
+
+# Relay binaries — never do line-ending or diff processing on these
+src/Plugin/addons/godotsharp_mcp/bin/GodotSharp.Relay.exe    binary diff=binary
+src/Plugin/addons/godotsharp_mcp/bin/GodotSharp.Relay.linux   binary diff=binary
+src/Plugin/addons/godotsharp_mcp/bin/GodotSharp.Relay.osx-x64   binary diff=binary
+src/Plugin/addons/godotsharp_mcp/bin/GodotSharp.Relay.osx-arm64 binary diff=binary
+
+# PNG assets
+*.png binary diff=binary

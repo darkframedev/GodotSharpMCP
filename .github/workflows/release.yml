@@ -1,0 +1,146 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+
+permissions:
+  contents: write   # needed to push binaries back and create releases
+
+jobs:
+  # -----------------------------------------------------------------------
+  # Build the relay for each platform
+  # -----------------------------------------------------------------------
+  build-relay:
+    name: Build relay (${{ matrix.rid }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - rid: win-x64
+            os: windows-latest
+            src_name: GodotSharp.Relay.exe
+            dest_name: GodotSharp.Relay.exe
+          - rid: linux-x64
+            os: ubuntu-latest
+            src_name: GodotSharp.Relay
+            dest_name: GodotSharp.Relay.linux
+          - rid: osx-x64
+            os: macos-latest
+            src_name: GodotSharp.Relay
+            dest_name: GodotSharp.Relay.osx-x64
+          - rid: osx-arm64
+            os: macos-latest
+            src_name: GodotSharp.Relay
+            dest_name: GodotSharp.Relay.osx-arm64
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.x'
+
+      - name: Publish relay
+        shell: bash
+        run: |
+          dotnet publish src/Relay/GodotSharp.Relay.csproj \
+            -c Release \
+            -r ${{ matrix.rid }} \
+            --no-self-contained \
+            -p:PublishSingleFile=true \
+            -o _publish \
+            --nologo -v quiet
+
+      - name: Rename binary
+        shell: bash
+        run: mv _publish/${{ matrix.src_name }} _publish/${{ matrix.dest_name }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: relay-${{ matrix.rid }}
+          path: _publish/${{ matrix.dest_name }}
+          if-no-files-found: error
+
+  # -----------------------------------------------------------------------
+  # Assemble the final zip, commit binaries back, and create the release
+  # -----------------------------------------------------------------------
+  package-and-release:
+    name: Package and release
+    needs: build-relay
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Use a PAT or the default GITHUB_TOKEN; the token must have write access
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+
+      # Download all four platform binaries
+      - name: Download relay artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: _artifacts
+
+      # Copy binaries into the plugin bin folder
+      - name: Stage binaries into plugin
+        run: |
+          BIN=src/Plugin/addons/godotsharp_mcp/bin
+          mkdir -p "$BIN"
+          cp _artifacts/relay-win-x64/GodotSharp.Relay.exe        "$BIN/"
+          cp _artifacts/relay-linux-x64/GodotSharp.Relay.linux     "$BIN/"
+          cp _artifacts/relay-osx-x64/GodotSharp.Relay.osx-x64     "$BIN/"
+          cp _artifacts/relay-osx-arm64/GodotSharp.Relay.osx-arm64 "$BIN/"
+          chmod +x "$BIN/GodotSharp.Relay.linux" \
+                   "$BIN/GodotSharp.Relay.osx-x64" \
+                   "$BIN/GodotSharp.Relay.osx-arm64"
+
+      # Commit binaries back to main so the Asset Library tag resolves correctly
+      - name: Commit binaries to repo
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add src/Plugin/addons/godotsharp_mcp/bin/
+          git diff --cached --quiet && echo "No binary changes to commit." || \
+            git commit -m "chore: update relay binaries for ${{ github.ref_name }}"
+          git push origin HEAD:main
+
+      # Build the distributable zip: addons/godotsharp_mcp/ at the root
+      - name: Assemble release zip
+        run: |
+          VERSION=${{ github.ref_name }}
+          STAGING=$(mktemp -d)
+          PLUGIN_SRC=src/Plugin/addons/godotsharp_mcp
+
+          # Copy plugin files (sources, cfg, icon, and binaries)
+          mkdir -p "$STAGING/addons/godotsharp_mcp/bin"
+          rsync -a --exclude='*.uid' --exclude='obj/' \
+            "$PLUGIN_SRC/" "$STAGING/addons/godotsharp_mcp/"
+
+          ZIP_NAME="godotsharp-mcp-${VERSION}.zip"
+          cd "$STAGING"
+          zip -r "$GITHUB_WORKSPACE/$ZIP_NAME" addons/
+          echo "ZIP_NAME=$ZIP_NAME" >> $GITHUB_ENV
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: GodotSharp MCP ${{ github.ref_name }}
+          generate_release_notes: true
+          files: ${{ env.ZIP_NAME }}
+          body: |
+            ## Installation
+
+            1. Download `godotsharp-mcp-${{ github.ref_name }}.zip` below
+            2. Extract into your **Godot project root** — you should see `addons/godotsharp_mcp/` appear
+            3. In Godot: **Project → Project Settings → Plugins** → enable **GodotSharp MCP**
+            4. In the bottom panel, click **Launch Relay**
+
+            **Supported platforms:** Windows (x64) · Linux (x64) · macOS (Intel x64) · macOS (Apple Silicon arm64)
+
+            See the [README](https://github.com/${{ github.repository }}/blob/main/README.md) for full setup instructions.

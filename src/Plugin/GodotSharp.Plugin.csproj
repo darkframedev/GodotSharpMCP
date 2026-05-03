@@ -1,0 +1,14 @@
+<Project Sdk="Godot.NET.Sdk/4.4.0">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>GodotSharp.Plugin</RootNamespace>
+    <!-- This project is for IDE support only.
+         The actual compilation is handled by Godot's build system
+         when the addon folder is symlinked into a Godot project. -->
+  </PropertyGroup>
+
+
+</Project>
